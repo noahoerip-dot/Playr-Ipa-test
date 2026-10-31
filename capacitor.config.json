@@ -1,0 +1,9 @@
+{
+  "appId": "com.noahoerip.playr",
+  "appName": "Playr",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#000000"
+  }
+}
