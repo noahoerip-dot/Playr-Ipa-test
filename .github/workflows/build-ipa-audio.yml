@@ -1,0 +1,68 @@
+name: Build Playr IPA (audio fix)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm ls @capacitor/ios >/dev/null 2>&1 || npm install @capacitor/ios
+
+      - name: Create iOS project
+        run: |
+          [ -d ios ] || npx cap add ios
+
+      - name: Audio fix (playback session + background audio)
+        run: |
+          python3 - <<'PY'
+          import re
+          p = "ios/App/App/AppDelegate.swift"
+          s = open(p, encoding="utf-8").read()
+          if "AVAudioSession" not in s:
+              if "import AVFoundation" not in s:
+                  s = s.replace("import UIKit", "import UIKit\nimport AVFoundation", 1)
+              block = ("        do {\n"
+                       "            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)\n"
+                       "            try AVAudioSession.sharedInstance().setActive(true)\n"
+                       "        } catch { print(error) }\n")
+              i = s.index("didFinishLaunchingWithOptions")
+              j = s.index("return true", i)
+              s = s[:j] + block + "        " + s[j:]
+              open(p, "w", encoding="utf-8").write(s)
+          PY
+          PL=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$PL" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PL"
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PL"
+          grep -n "AVAudioSession" ios/App/App/AppDelegate.swift
+
+      - name: Sync web files
+        run: npx cap sync ios
+
+      - name: Build (unsigned)
+        run: |
+          cd ios/App
+          if [ -d App.xcworkspace ]; then TARGET="-workspace App.xcworkspace"; else TARGET="-project App.xcodeproj"; fi
+          xcodebuild $TARGET -scheme App -configuration Release -sdk iphoneos \
+            -derivedDataPath ../../build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+
+      - name: Package IPA
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qr Playr.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Playr-ipa
+          path: Playr.ipa
